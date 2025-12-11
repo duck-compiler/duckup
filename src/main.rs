@@ -439,14 +439,7 @@ fn list_installed(toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
                         }
                         #[cfg(windows)]
                         {
-                            use std::os::windows::fs::MetadataExt;
-                            if let (Some(idx1), Some(idx2)) =
-                                (meta.file_index(), entry_bin_meta.file_index())
-                            {
-                                if idx1 == idx2 {
-                                    is_active = true;
-                                }
-                            } else if meta.len() == entry_bin_meta.len() {
+                            if meta.len() == entry_bin_meta.len() {
                                 is_active = true;
                             }
                         }

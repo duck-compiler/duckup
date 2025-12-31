@@ -43,14 +43,14 @@ tag_setup "Detecting latest nightly for $OS_TAG-$ARCH_TAG..."
 RELEASES_JSON=$(curl -sSf "https://api.github.com/repos/$REPO/releases" || echo "ERROR")
 
 if [ "$RELEASES_JSON" = "ERROR" ]; then
-    tag_error "Failed to fetch releases. Check if REPO='$REPO' is correct and public."
+    tag_error "Failed to fetch releases."
     exit 1
 fi
 
 LATEST_TAG=$(echo "$RELEASES_JSON" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | grep '^nightly-' | head -n 1 || true)
 
 if [ -z "$LATEST_TAG" ]; then
-    tag_error "Could not find a 'nightly-*' tag in $REPO. Please check your GitHub Releases."
+    tag_error "Could not find a 'nightly-*' tag in $REPO."
     exit 1
 fi
 

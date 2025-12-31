@@ -16,12 +16,20 @@ use zip::ZipArchive;
 
 const REPO_ORGANIZATION: &str = "duck-compiler";
 const REPO_NAME: &str = "duckc";
-const BINARY_NAME: &str = "dargo";
+const BINARY_BASE_NAME: &str = "dargo";
 const FALLBACK_GO_VERSION: &str = "1.25.0";
+
+fn get_binary_name() -> String {
+    if cfg!(target_os = "windows") {
+        format!("{}.exe", BINARY_BASE_NAME)
+    } else {
+        BINARY_BASE_NAME.to_string()
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "duckup")]
-#[command(about = "The duck compiler toolchain manager", long_about = None)]
+#[command(about = "The duck compiler toolchain manager", long_about = "duckup manages installations of the duck compiler toolchain. it handles downloading specific versions, managing the compiler dependencies (Go), and switching between active toolchains.")]
 struct DuckUpCli {
     #[command(subcommand)]
     command: Commands,
@@ -29,18 +37,27 @@ struct DuckUpCli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// install a specific version of the duck toolchain
     Install {
-        version: String,
+        /// the version tag to install (e.g., 'v1.0.0' or 'nightly')
+        version: String
     },
+    /// check for and install the latest nightly release
     Update,
+    /// list all currently installed toolchain versions
     List,
+    /// set a specific installed version as the active toolchain
     Use {
-        version: String,
+        /// the version tag to switch to
+        version: String
     },
+    /// run the active dargo binary with the provided arguments
     Run {
+        /// arguments to pass directly to dargo
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// display information about the current environment and paths
     Env,
 }
 
@@ -80,11 +97,7 @@ fn main() -> Result<()> {
         Commands::Update => {
             println!("{} {}", " ".on_green(), "checking for updates...".cyan());
             let latest = fetch_latest_tag()?;
-            println!(
-                "{} found latest nightly: {}",
-                " ".on_green(),
-                latest.green().bold()
-            );
+            println!("{} found latest nightly: {}", " ".on_green(), latest.green().bold());
             install_dependencies(&latest, &cache_dir)?;
             install_version(&latest, &toolchain_dir)?;
             set_active(&latest, &toolchain_dir, &bin_dir)?;
@@ -314,57 +327,35 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 
 fn install_version(tag: &str, toolchain_dir: &Path) -> Result<()> {
     let install_path = toolchain_dir.join(tag);
-    if install_path.exists() {
-        println!(
-            "{} version {} is already installed.",
-            " ".on_yellow(),
-            tag.bold()
-        );
+    let binary_name = get_binary_name(); // Dynamic name
+    let binary_dest = install_path.join(&binary_name);
+
+    if binary_dest.exists() {
+        println!("{} version {} is already installed.", " ".on_yellow(), tag.bold());
         return Ok(());
     }
 
     println!("{} installing {}...", " duckup ".on_yellow(), tag.cyan());
 
     let target_filename = get_target_filename()?;
-    println!("{} detected platform: {}", " ".on_green(), target_filename);
-
     let client = Client::builder().user_agent("duckup").build()?;
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/releases/tags/{}",
-        REPO_ORGANIZATION, REPO_NAME, tag
-    );
+    let url = format!("https://api.github.com/repos/{}/{}/releases/tags/{}", REPO_ORGANIZATION, REPO_NAME, tag);
 
     let resp = client.get(&url).send()?;
     if !resp.status().is_success() {
-        bail!(
-            "{} release {} not found on github.",
-            " error ".on_bright_red(),
-            tag.red()
-        );
+        bail!("{} release {} not found on github.", " error ".on_bright_red(), tag.red());
     }
 
     let release: Release = resp.json()?;
-
-    let asset = release
-        .assets
-        .iter()
+    let asset = release.assets.iter()
         .find(|a| a.name == target_filename)
-        .context(format!(
-            "could not find binary '{}' in release {}",
-            target_filename, tag
-        ))?;
+        .context(format!("could not find binary '{}' in release {}", target_filename, tag))?;
 
-    println!(
-        "{} downloading {}...",
-        " download ".on_green(),
-        asset.browser_download_url
-    );
+    println!("{} downloading {}...", " download ".on_green(), asset.browser_download_url);
     let mut resp = client.get(&asset.browser_download_url).send()?;
 
     fs::create_dir_all(&install_path)?;
-    let binary_dest = install_path.join(BINARY_NAME);
     let mut file = fs::File::create(&binary_dest)?;
-
     io::copy(&mut resp, &mut file)?;
 
     #[cfg(unix)]
@@ -375,24 +366,17 @@ fn install_version(tag: &str, toolchain_dir: &Path) -> Result<()> {
         fs::set_permissions(&binary_dest, perms)?;
     }
 
-    println!(
-        "{} installed {} successfully.",
-        " success ".on_green().bold(),
-        tag
-    );
+    println!("{} installed {} successfully.", " success ".on_green().bold(), tag);
     Ok(())
 }
 
 fn set_active(tag: &str, toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
-    let source_path = toolchain_dir.join(tag).join(BINARY_NAME);
-    let link_path = bin_dir.join(BINARY_NAME);
+    let bin_name = get_binary_name();
+    let source_path = toolchain_dir.join(tag).join(&bin_name);
+    let link_path = bin_dir.join(&bin_name);
 
     if !source_path.exists() {
-        bail!(
-            "Version {} is not installed. Run '{}' first.",
-            tag.red(),
-            format!("duckup install {}", tag).yellow()
-        );
+        bail!("Version {} is not installed. Run 'duckup install {}' first.", tag.red(), tag.yellow());
     }
 
     if link_path.exists() {
@@ -403,18 +387,14 @@ fn set_active(tag: &str, toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
         .or_else(|_| fs::copy(&source_path, &link_path).map(|_| ()))
         .context("failed to link binary to bin directory")?;
 
-    println!(
-        "{} switched to {}.",
-        " success ".on_green().bold(),
-        tag.cyan()
-    );
+    println!("{} switched to {}.", " success ".on_green().bold(), tag.cyan());
     Ok(())
 }
 
 fn list_installed(toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
     println!("{}", "installed toolchains:".bold().underline());
-
-    let active_bin = bin_dir.join(BINARY_NAME);
+    let bin_name = get_binary_name();
+    let active_bin = bin_dir.join(&bin_name);
     let active_meta = fs::metadata(&active_bin).ok();
 
     if !toolchain_dir.exists() {
@@ -427,9 +407,8 @@ fn list_installed(toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
         if entry.metadata()?.is_dir() {
             if let Some(name) = entry.file_name().to_str() {
                 let mut is_active = false;
-
                 if let Some(meta) = &active_meta {
-                    if let Ok(entry_bin_meta) = fs::metadata(entry.path().join(BINARY_NAME)) {
+                    if let Ok(entry_bin_meta) = fs::metadata(entry.path().join(&bin_name)) {
                         #[cfg(unix)]
                         {
                             use std::os::unix::fs::MetadataExt;
@@ -439,13 +418,14 @@ fn list_installed(toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
                         }
                         #[cfg(windows)]
                         {
-                            if meta.len() == entry_bin_meta.len() {
+                            // On Windows, compare size and modified time as a fallback for hardlink detection
+                            if meta.len() == entry_bin_meta.len() &&
+                               meta.modified().ok() == entry_bin_meta.modified().ok() {
                                 is_active = true;
                             }
                         }
                     }
                 }
-
                 if is_active {
                     println!("  {} {}", name.green(), "(active)".cyan());
                 } else {
@@ -458,12 +438,9 @@ fn list_installed(toolchain_dir: &Path, bin_dir: &Path) -> Result<()> {
 }
 
 fn run_dargo(bin_dir: &Path, args: Vec<String>) -> Result<()> {
-    let binary = bin_dir.join(BINARY_NAME);
+    let binary = bin_dir.join(get_binary_name());
     if !binary.exists() {
-        bail!(
-            "no active toolchain selected. run '{}' first.",
-            "duckup update".yellow()
-        );
+        bail!("no active toolchain selected. run 'duckup update' first.");
     }
 
     let status = Command::new(binary)
@@ -474,7 +451,6 @@ fn run_dargo(bin_dir: &Path, args: Vec<String>) -> Result<()> {
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
     }
-
     Ok(())
 }
 
@@ -515,7 +491,7 @@ fn print_env_info(toolchain_dir: &Path, bin_dir: &Path) {
 
     println!("---------------------------------------");
     println!("{}: {:?}", "toolchain dir".green(), toolchain_dir);
-    println!("{}: {:?}", "binary dir   ".green(), bin_dir);
+    println!("{}: {:?}", "binary dir    ".green(), bin_dir);
     println!("");
 
     let path_env = env::var_os("PATH").unwrap_or_default();
@@ -526,8 +502,11 @@ fn print_env_info(toolchain_dir: &Path, bin_dir: &Path) {
         println!("{}", "✅ binary directory is in your PATH".green());
     } else {
         println!("{}", "⚠️  binary directory is NOT in your PATH".yellow());
-        println!("   add this to your shell profile:");
-        println!("   export PATH=\"$PATH:{}\"", bin_str.cyan());
+        println!("    add this to your shell profile:");
+        #[cfg(windows)]
+        println!("    $env:Path += \";{}\"", bin_str.cyan());
+        #[cfg(unix)]
+        println!("    export PATH=\"$PATH:{}\"", bin_str.cyan());
     }
 }
 
@@ -578,5 +557,5 @@ fn get_target_filename() -> Result<String> {
     };
 
     let ext = if os == "windows" { ".exe" } else { "" };
-    Ok(format!("dargo-{}-{}{}", os_str, arch_str, ext))
+    Ok(format!("{}-{}-{}{}", BINARY_BASE_NAME, os_str, arch_str, ext))
 }

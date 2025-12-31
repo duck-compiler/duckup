@@ -2,9 +2,21 @@
 set -e
 
 REPO="duck-compiler/duckup"
-INSTALL_DIR="$HOME/.duckup"
-BIN_DIR="$INSTALL_DIR/bin"
 EXE_NAME="duckup"
+
+if [ -n "$XDG_DATA_HOME" ]; then
+    DATA_DIR="$XDG_DATA_HOME/duckup"
+else
+    DATA_DIR="$HOME/.local/share/duckup"
+fi
+
+if [ -n "$XDG_BIN_HOME" ]; then
+    BIN_DIR="$XDG_BIN_HOME"
+else
+    BIN_DIR="$HOME/.local/bin"
+fi
+
+GLOBAL_DUCK="$HOME/.duck"
 
 C_RESET='\033[0m'
 C_WHITE='\033[97m'
@@ -26,15 +38,15 @@ OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
 case "${OS}" in
-    darwin)  OS_TAG="macos" ;;
-    linux)   OS_TAG="linux" ;;
+    darwin) OS_TAG="macos" ;;
+    linux)  OS_TAG="linux" ;;
     *) tag_error "Unsupported OS: $OS"; exit 1 ;;
 esac
 
 case "${ARCH}" in
-    x86_64)  ARCH_TAG="x86_64" ;;
-    aarch64|arm64) ARCH_TAG="aarch64" ;;
-    armv7*)  ARCH_TAG="armv7" ;;
+    x86_64)          ARCH_TAG="x86_64" ;;
+    aarch64|arm64)   ARCH_TAG="aarch64" ;;
+    armv7*)          ARCH_TAG="armv7" ;;
     *) tag_error "Unsupported Architecture: $ARCH"; exit 1 ;;
 esac
 
@@ -47,8 +59,7 @@ if [ "$RELEASES_JSON" = "ERROR" ]; then
     exit 1
 fi
 
-LATEST_TAG=$(echo "$RELEASES_JSON" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | grep '^nightly-' | head -n 1 || true)
-
+LATEST_TAG=$(echo "$RELEASES_JSON" | grep -o 'nightly-[0-9]\{8\}-[a-z0-9]\{7\}' | head -n 1 || true)
 if [ -z "$LATEST_TAG" ]; then
     tag_error "Could not find a 'nightly-*' tag in $REPO."
     exit 1
@@ -58,6 +69,8 @@ DOWNLOAD_URL="https://github.com/$REPO/releases/download/$LATEST_TAG/duckup-$OS_
 
 tag_io "Downloading $EXE_NAME from $LATEST_TAG..."
 mkdir -p "$BIN_DIR"
+mkdir -p "$GLOBAL_DUCK"
+
 curl -qLsSf "$DOWNLOAD_URL" -o "$BIN_DIR/$EXE_NAME"
 chmod +x "$BIN_DIR/$EXE_NAME"
 

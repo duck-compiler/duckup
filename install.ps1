@@ -1,15 +1,20 @@
 $ErrorActionPreference = "Stop"
 
 $REPO = "duck-compiler/duckup"
-$INSTALL_DIR = "$HOME\.duckup"
-$BIN_DIR = "$INSTALL_DIR\bin"
+$BINARY_BASE_NAME = "duckup"
 $EXE_NAME = "duckup.exe"
-$EXE_PATH = "$BIN_DIR\$EXE_NAME"
+
+$DATA_DIR = Join-Path $env:LOCALAPPDATA "duck-compiler\duckup"
+$BIN_DIR = Join-Path $DATA_DIR "bin"
+$EXE_PATH = Join-Path $BIN_DIR $EXE_NAME
+
+$GLOBAL_DUCK = Join-Path $HOME ".duck"
+$TOOLCHAIN_DIR = Join-Path $DATA_DIR "toolchains"
+$CACHE_DIR = Join-Path $DATA_DIR "cache"
 
 $E = [char]27
 $C_RESET = "$E[0m"
 $C_WHITE = "$E[97m"
-
 $BG_DARGO = "$E[103;30m"
 $BG_ERR   = "$E[41;97m"
 $BG_SETUP = "$E[48;2;23;120;20;97m"
@@ -17,59 +22,49 @@ $BG_CHECK = "$E[42;97m"
 $BG_IO    = "$E[48;2;23;120;20;97m"
 $BG_ALERT = "$E[103;30m"
 
-function Write-TagDuckup { Write-Host -NoNewline "$BG_DARGO duckup $C_RESET" }
-function Write-TagSetup  { Write-TagDuckup; Write-Host "$BG_SETUP setup $C_RESET $($args[0])" }
-function Write-TagError  { Write-TagDuckup; Write-Host "$BG_ERR error $C_RESET $($args[0])" }
-function Write-TagCheck  { Write-TagDuckup; Write-Host "$BG_CHECK  ✓  $C_RESET $($args[0])" }
-function Write-TagIO     { Write-TagDuckup; Write-Host "$BG_IO  IO   $C_RESET $($args[0])" }
-function Write-TagAlert  { Write-TagDuckup; Write-Host "$BG_ALERT  !  $C_RESET $($args[0])" }
+function Write-TagDargo { Write-Host -NoNewline "$BG_DARGO duckup $C_RESET" }
+function Write-TagSetup  { Write-TagDargo; Write-Host "$BG_SETUP setup $C_RESET $($args[0])" }
+function Write-TagError  { Write-TagDargo; Write-Host "$BG_ERR error $C_RESET $($args[0])" }
+function Write-TagCheck  { Write-TagDargo; Write-Host "$BG_CHECK  ✓  $C_RESET $($args[0])" }
+function Write-TagIO     { Write-TagDargo; Write-Host "$BG_IO  IO   $C_RESET $($args[0])" }
+function Write-TagAlert  { Write-TagDargo; Write-Host "$BG_ALERT  !  $C_RESET $($args[0])" }
 
-$ARCH = $env:PROCESSOR_ARCHITECTURE.ToLower()
+New-Item -Path $BIN_DIR, $TOOLCHAIN_DIR, $CACHE_DIR, $GLOBAL_DUCK -ItemType Directory -Force | Out-Null
+
+$ARCH_RAW = $env:PROCESSOR_ARCHITECTURE.ToLower()
 $OS_TAG = "windows"
-
-case ($ARCH) {
-    "amd64" { $ARCH_TAG = "x86_64" }
-    "arm64" { $ARCH_TAG = "aarch64" }
-    default {
-        Write-TagError "Unsupported Architecture: $ARCH"
-        exit 1
-    }
-}
+$ARCH_TAG = if ($ARCH_RAW -eq "amd64") { "x86_64" } else { "aarch64" }
 
 Write-TagSetup "Detecting latest nightly for $OS_TAG-$ARCH_TAG..."
 
 try {
     $Releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases" -UseBasicParsing
-    $LatestNightly = ($Releases | Where-Object { $_.tag_name -like "nightly-*" } | Select-Object -First 1)
+    $LatestNightly = ($Releases | Where-Object { $_.tag_name -match "nightly-\d{8}-[a-z0-9]{7}" } | Select-Object -First 1)
 } catch {
-    Write-TagError "Failed to fetch releases."
+    Write-TagError "Failed to fetch releases from GitHub."
     exit 1
 }
 
 if ($null -eq $LatestNightly) {
-    Write-TagError "Could not find a 'nightly-*' tag in $REPO."
+    Write-TagError "Could not find a valid nightly tag (nightly-YYYYMMDD-hash) in $REPO."
     exit 1
 }
 
 $Tag = $LatestNightly.tag_name
-# Note: Windows binaries in your workflow are named duckup-windows-x86_64.exe
-$AssetSuffix = if ($ARCH_TAG -eq "x86_64") { "x86_64" } else { "aarch64" }
-$DownloadUrl = "https://github.com/$REPO/releases/download/$Tag/duckup-windows-$AssetSuffix.exe"
+$TargetFileName = "${BINARY_BASE_NAME}-${OS_TAG}-${ARCH_TAG}.exe"
+$DownloadUrl = "https://github.com/$REPO/releases/download/$Tag/$TargetFileName"
 
 Write-TagIO "Downloading $EXE_NAME from $Tag..."
-
-if (-not (Test-Path $BIN_DIR)) {
-    New-Item -Path $BIN_DIR -ItemType Directory -Force | Out-Null
-}
 
 try {
     Invoke-WebRequest -Uri $DownloadUrl -OutFile $EXE_PATH -UseBasicParsing
 } catch {
-    Write-TagError "Download failed. Verify that the asset 'duckup-windows-$AssetSuffix.exe' exists in the release."
+    Write-TagError "Download failed. Asset '$TargetFileName' not found in release $Tag."
     exit 1
 }
 
 Write-TagCheck "Successfully installed $EXE_NAME to $EXE_PATH"
+Write-TagCheck "Initialized configuration at $GLOBAL_DUCK"
 
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -notlike "*$BIN_DIR*") {
@@ -90,4 +85,5 @@ if ($UserPath -notlike "*$BIN_DIR*") {
 }
 
 Write-Host "`n---"
+# Ausführung des installierten Binaries
 & $EXE_PATH --help
